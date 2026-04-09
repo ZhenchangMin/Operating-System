@@ -231,13 +231,13 @@ strace -e trace=%memory ./a.out   # 只追踪内存管理相关syscall
 - **状态迁移** = 选择一个 CPU 执行 → 响应中断 → 从 PC 处取指令执行
 
 为了让 "操作系统" 这个程序能够正确启动，计算机硬件系统必定和程序员之间存在约定：
-‣ 首先就是 Reset 的状态。
+‣ 首先就是 Reset 的时候CPU处于什么初始状态
 ‣ 然后是 Reset 以后执行的程序应该做什么
 
 ### 硬件系统和程序员的约定
 ![1773299840058](image/lec2viewsofOS/1773299840058.png)
-![1773299858565](image/lec2viewsofOS/1773299858565.png)
-![1773300022704](image/lec2viewsofOS/1773300022704.png)
+CPU Reset后寄存器（尤其 PC）有固定初始状态，CPU 会从这个地址开始取指执行
+这个地址对应的内容由厂商放在 **ROM/Firmware** 里，先执行固件代码；固件再去初始化硬件、从存储设备加载下一阶段（loader 或 OS）
 
 **Bare-metal 约定（裸机约定）**：
 - Firmware（固件）存放在 ROM 中，通过 Memory-mapped I/O 访问
@@ -254,8 +254,13 @@ x86 CPU Reset 后的初始状态：
 - MIPS：`0xBFC00000`
 - ARM：`0x00000000`
 - RISC-V：实现定义（implementation-defined）
-
 #### BIOS vs UEFI
+固件就是写在硬件里面的启动软件，存放在 ROM 中，在上电或者CPU Reset 后从固定地址开始执行固件代码，比操作系统运行早。
+任务是初始化硬件设备，加载操作系统到内存中，并将控制权交给操作系统。
+![1773300022704](image/lec2viewsofOS/1773300022704.png)
+复位(Reset)之后，CPU 会从固定地址开始执行**固件代码**。这个固件代码有两种主流实现：**Legacy BIOS** 和 **UEFI**。
+- **Legacy BIOS**：历史悠久，设计简单，但功能有限，无法支持现代硬件设备，且安全性较差
+- **UEFI**：现代固件标准，支持更多硬件设备，提供更丰富的功能和更好的安全性
 今天的 Firmware 面临麻烦得多的硬件： 指纹锁、USB 转接器上的 Linux-to-Go 优盘、USB 蓝牙转接器连接的蓝牙键盘、…
 - 这些设备都需要 "驱动程序" 才能访问
 - 而传统BIOS只能支持有限的硬件，因此需要UEFI来支持更多的硬件设备
@@ -272,24 +277,13 @@ x86 CPU Reset 后的初始状态：
 - Firmware 能够加载任意大小的 PE 可执行文件 `.efi`
 - EFI 应用可以再次返回 firmware
 
-![1773300197779](image/lec2viewsofOS/1773300197779.png)
-
 ### CPU Reset后
 
 CPU reset后，如何观察一个计算机系统的指令运行？
 QEMU是一个开源的计算机模拟器，可以模拟各种计算机系统，包括x86、ARM、MIPS等。
 
 #### 用 QEMU + GDB 观察 CPU Reset
-```bash
-# 启动 QEMU，等待 GDB 连接，暂停在第一条指令
-qemu-system-x86_64 -s -S mbr.img
-
-# 另开终端连接 GDB
-gdb
-target remote localhost:1234
-# 此时 CPU 停在 Reset 后第一条指令，可以单步观察 Firmware 执行
-```
-
+MBR 是 Master Boot Record（主引导记录），就是磁盘最前面的第一个扇区
 ![1773300639710](image/lec2viewsofOS/1773300639710.png)
 ![1773300651806](image/lec2viewsofOS/1773300651806.png)
 
@@ -301,12 +295,10 @@ target remote localhost:1234
 - Loader 工作流程：16-bit 实模式 → 进入 32-bit 保护模式 → 加载 ELF32/ELF64 内核镜像
 
 #### 最小 OS 实现
-从 CPU Reset 到 OS 运行的完整路径：
-```
-CPU RESET → Firmware(BIOS/UEFI) → MBR/EFI Bootloader → ELF image → 初始化C运行环境 → OS main()
-```
+默认固件是BIOS
+![1775722034235](image/lec2viewsofOS/1775722034235.png)
 
-Bare-metal C 代码要求：
+Bare-metal 上运行C 代码要求：
 - 静态链接（无动态库）
 - Freestanding 模式（`-ffreestanding`，无标准库）
 - 自己初始化 C 运行环境（清零 BSS 段、设置栈指针等）
@@ -343,12 +335,6 @@ Bare-metal C 代码要求：
 - Virtual address translation 入口寄存器
 - 其他数据寄存器（EAX, EBX...）
 
-**X86 上下文切换过程**：
-1. 异常事件发生前：用户进程正常运行，CPU 寄存器保存当前状态
-2. 异常发生后：CPU 自动将 SS:ESP, CS:EIP, EFLAGS, EAX, EBX 等保存到**内核栈**（安全可靠！）
-3. 跳转到 handler() 执行中断处理程序
-4. 中断处理完毕：将保存的现场从内核栈弹出到 CPU，恢复之前的执行
-
 > **Context 给了我们多个 CPU 的虚像！是分时操作系统的核心。**
 
 注意：中断处理时出现中断怎么办？→ 在中断处理期间 disable 中断（排队），处理结束后 enable。
@@ -372,7 +358,7 @@ Bare-metal C 代码要求：
 
 ## 抽象视角
 
-### 我们还没真正理解操作系统
+### 我还没真正理解操作系统？
 目前我们有两个视角，但都是从侧面：
 - 应用的视角（自顶向下）：OS = 解释 syscall 的存在
 - 硬件的视角（自底向上）：OS = 一个 C 程序，有完整硬件控制权
@@ -543,11 +529,3 @@ def run(self):
 | sys_bread(k) | read | 读取虚拟磁盘块 k 的数据 |
 | sys_bwrite(k,v) | write | 向虚拟磁盘块 k 写入数据 v |
 | sys_sync() | sync | 将所有向虚拟磁盘的数据写入落盘 |
-
-### 总结：三个视角下的操作系统
-
-| 视角 | 操作系统是什么 |
-|---|---|
-| 应用视角（自顶向下）| 帮助解释 syscall 的存在，比 CPU 更高级的"机器" |
-| 硬件视角（自底向上）| 一个 C 程序，有完整的硬件控制权（中断、I/O） |
-| 抽象视角（全局）| 一个被动迁移的状态机，初始化后变成 interrupt/trap/fault handler |
