@@ -206,3 +206,70 @@ void mutex_unlock(spinlock_t *lk) {
 }
 ```
 ![1776327847132](image/lec5MutualExclusionAdvances/1776327847132.png)
+Thread 1 发现锁不是 UNLOCK，准备去等待队列睡眠。
+但它还没真正进入等待队列时，Thread 2 执行了解锁：先把锁状态改成 UNLOCKED，检查等待队列是否为空，如果不空就 wakeup
+Thread 2 检查时，等待队列“此刻是空的”，所以没有唤醒任何线程。
+随后 Thread 1 才执行 wait(...) 进入睡眠。
+结果：这次唤醒机会已经错过了，Thread 1 可能一直睡下去。
+
+我们可以利用Linux Futex (“Fast Userspace muTEX”) syscalls来实现互斥锁
+- `futex_wait(int *addr, int expected)`: 如果*addr == expected，就阻塞等待被唤醒，否则⽴即返回给⽤户线程，使其可以⽴⻢再次尝试lock
+- `futex_wake(int *addr, int num)`: 唤醒⼀个等待address指向的锁的线程
+
+```c
+#define UNLOCK    0 // 锁空闲
+#define ONE_HOLD  1 // 锁被持有，无等待者
+#define WAITERS   2 // 锁被持有，而且已经有等待线程
+
+void mutex_unlock(spinlock_t *lk) {
+    // state can only be ONE_HOLD or WAITERS
+    if (atomic_dec(lk) != ONE_HOLD) {
+        // 如果返回值不是 ONE_HOLD，说明除了当前持有者之外还有等待者
+        lk = UNLOCK; // 把状态设为 UNLOCK
+        futex_wake(lk); // 调用 futex_wake 唤醒等待线程
+    } else {
+        // 说明没人等
+        return;  // the fast path unlock
+    }
+}
+
+void mutex_lock(spinlock_t *lk) {
+    // Return old value of state;
+    // if lk == UNLOCK, set state = ONE_HOLD (uncontested).
+    int c = cmpxchg(lk, UNLOCK, ONE_HOLD);
+
+    if (c != UNLOCK) {
+        // Previous state is either ONE_HOLD or WAITERS. 进入循环处理竞争
+        do {
+            if (c == WAITERS ||
+                // If previous state is ONE_HOLD,
+                // now it has one more waiter.
+                // And it is possible the lock is released now.
+                cmpxchg(lk, ONE_HOLD, WAITERS) != 0) {
+                futex_wait(lk, WAITERS); // 只有当当前值仍等于 WAITERS 才睡眠，否则立刻返回
+            }
+            // Repeat checking whether the lock is released.
+        } while ((c = cmpxchg(lk, UNLOCK, WAITERS)) != 0);
+    } else {
+        return;  // the fast path lock，直接拿到锁
+    }
+}
+```
+
+![1776328362492](image/lec5MutualExclusionAdvances/1776328362492.png)
+![1776328384565](image/lec5MutualExclusionAdvances/1776328384565.png)
+![1776328398776](image/lec5MutualExclusionAdvances/1776328398776.png)
+![1776328450341](image/lec5MutualExclusionAdvances/1776328450341.png)
+
+## 并发数据结构
+
+线程安全的数据结构指的⼀个数据结构可以被多个线程并发的访问
+‣ 也被称为并发数据结构
+
+要达成这样的数据结构⼀般我们需要在访问和更新该数据结构时上锁（⼀把或多把）
+最简单的做法：⼀把⼤锁（One Big Lock）！所有访问都串⾏化（实际上，早期的Linux就是这么做的，Big Kernel Lock（BKL），简单，正确！）
+‣ 但在多处理器时代，可能会造成性能瓶颈
+
+![1776329051067](image/lec5MutualExclusionAdvances/1776329051067.png)
+![1776329065622](image/lec5MutualExclusionAdvances/1776329065622.png)
+![1776329083606](image/lec5MutualExclusionAdvances/1776329083606.png)
