@@ -14,8 +14,8 @@ int main(int argc, char *argv[]) {
  int status, i; 
  for(i=0; i < NUMBER_OF_THREADS; i++){ 
  printf("Main here. Creating thread %d\n", i); 
- // create函数的参数：线程ID，线程属性（NULL表示默认属性），线程函数，线程函数的参数
- status = pthread_create(&threads[i], NULL, print_hello_world, (void *)i); // 创建线程，传入线程ID作为参数
+ // create函数的参数：线程ID的指针，线程属性（NULL表示默认属性），线程函数，线程函数的参数
+ status = pthread_create(&threads[i], NULL, print_hello_world, (void *)i); // 创建线程，传入一个pthread_t指针，创建的线程id存到这里
  // 异常处理
  if (status != 0) { 
  printf("Oops. pthread_create returned error code %d\n", status); 
@@ -23,6 +23,6 @@ int main(int argc, char *argv[]) {
  } 
  } 
  // 主线程阻塞自己，等待所有线程结束
- for (i=0; i < NUMBER_OF_THREADS; i++){ pthread_join(threads[i], NULL);}  // 等待所有线程结束
+ for (i=0; i < NUMBER_OF_THREADS; i++){ pthread_join(threads[i], NULL);}  // 等待所有线程结束,NULL代表不需要这个线程的返回值，只需要等待他执行
  return 0;
 }
